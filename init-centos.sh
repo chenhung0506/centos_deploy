@@ -1,7 +1,5 @@
 #!/bin/bash
-
 set -e
-
 function chk_root(){
   # Make sure only root can run this script
   if [[ $EUID -ne 0 ]]; then
@@ -10,8 +8,28 @@ function chk_root(){
   fi
 }
 
+# install docker-ce off line
 function install_docker_off_line(){
-  sudo rpm -ivh --replacefiles --replacepkgs  
+  rpm_path='./pkgs/docker-ce'
+  sudo rpm -ivh --replacefiles --replacepkgs $(find $rpm_path -type f -name '*.rpm')
+  sudo systemctl start docker
+  # Enable and start the docker service
+  sudo systemctl enable docker --now
+  # Set the permission
+  sudo usermod -aG docker "${USER}"
+  #更新用户组
+  newgrp docker
+  #確認 docker 成功啟動
+  sudo systemctl status docker
+  docker ps
+}
+
+# install docker-compose off line
+function install_docker_compose_off_line(){
+  compose_file_path='./pkgs/docker-compose'
+  sudo cp "${compose_file_path}/docker-compose-Linux-x86_64 /usr/local/bin/docker-compose"
+  sudo chmod +x /usr/local/bin/docker-compose
+  docker-compose --version
 }
 
 # 1. Install docker and docker-compose
@@ -22,26 +40,19 @@ function install_docker(){
 
   # Set the insecure registries
   mkdir -p /etc/docker
-
   #指定安装docker版本
   yum list docker-ce --showduplicates
   sudo yum install -y docker-ce-18.06.1.ce
-
   yum install -y docker-ce
-
   # Enable and start the docker service
   systemctl enable docker --now
-
   # Set the permission
   local user="${SUDO_USER:-${USER}}"
   usermod -aG docker "${user}"
-
   #更新用户组
   newgrp docker
-
   # Check
   sudo -u deployer docker ps
-
   # Docker-Compose
   local docker_compose_basepath='/usr/local/bin'
   local docker_compose_path="${docker_compose_basepath}/docker-compose"
@@ -90,7 +101,6 @@ EOF
 fi
 
   cat "${sysctl_conf}"
-
   sysctl -p
 }
 
@@ -136,59 +146,26 @@ EOF
   
   systemctl daemon-reload
   systemctl restart docker 
-  
   # Verify that the configuration has been loaded:
   systemctl show --property=Environment docker | grep 'PROXY'
   docker info | grep 'Proxy'
 }
 
-# For the Taipei office only
-function replace_hosts_gitlab(){
-  HOSTS_FILE='/etc/hosts'
-  if ! cat "${HOSTS_FILE}" | grep -q 'gitlab.emotibot.com'; then
-    echo '# Git Pull or Git clone from internet instead
-180.169.210.130 gitlab.emotibot.com' | tee --append "${HOSTS_FILE}"
-fi
- 
-# Verify
-cat "${HOSTS_FILE}"
-}
-
-# For the Taipei office only
-function replace_hosts_docker_registry(){
-  HOSTS_FILE='/etc/hosts'
-  if ! cat "${HOSTS_FILE}" | grep -q 'harbor.emotibot.com'; then
-    echo '# Pull images from internet instead
-180.169.210.130 docker-reg.emotibot.com.cn
-192.168.3.84 harbor.emotibot.com' | sudo tee --append "${HOSTS_FILE}"
-  fi
-  
-  # Verify
-  cat "${HOSTS_FILE}"
-}
-
 function main(){
-  echo "TP value=>  $TP"
   echo "WAN value=>  $WAN"
   chk_root
-  # In Wide Area Network
-  if [[ "${WAN}" == 'true' ]]; then
-    install_docker
-  fi
   install_other_packages
   set_sysctl
   increase_fd_socket_size
   stop_firewalld
   stop_networkmanager
   disable_selinux
-
-  # For the Taipei office only
-  if [[ "${TP}" == 'true' ]]; then
-    #set_docker_proxy
-    replace_hosts_gitlab
-    #replace_hosts_docker_registry
+  if [[ "${WAN}" == 'true' ]]; then
+    install_docker
+  elif [ "${WAN}" == 'false' ]; then
+    install_docker_off_line
+    install_docker_compose_off_line
   fi
-
   echo 'Done, You may reboot to take effect'
 }
 
